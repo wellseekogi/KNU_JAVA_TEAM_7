@@ -36,7 +36,7 @@ public class StableRoommatesMatcher implements Matcher {
             throw new IllegalArgumentException("매칭 대상 인원은 반드시 짝수여야 합니다: " + people.size());
         }
 
-        MatchContext context = new MatchContext(people);
+        MatchContext context = new MatchContext(people, filter, calculator);
         List<int[]> stablePairs = tryIrvingStableRoommates(context);
         if (stablePairs != null && isStable(context, stablePairs)) {
             return toResults(context, stablePairs);
@@ -376,7 +376,14 @@ public class StableRoommatesMatcher implements Matcher {
             Person b = context.people.get(pair[1]);
             results.add(createResult(a, b));
         }
-        results.sort(Comparator.comparingInt(result -> Math.min(result.personA, result.personB)));
+        results.sort(new Comparator<MatchResult>() {
+            @Override
+            public int compare(MatchResult left, MatchResult right) {
+                int leftId = Math.min(left.personA, left.personB);
+                int rightId = Math.min(right.personA, right.personB);
+                return Integer.compare(leftId, rightId);
+            }
+        });
         return results;
     }
 
@@ -409,257 +416,5 @@ public class StableRoommatesMatcher implements Matcher {
             }
         }
         return pairs;
-    }
-
-    private static class DpChoice {
-        final double cost;
-        final int partner;
-
-        DpChoice(double cost, int partner) {
-            this.cost = cost;
-            this.partner = partner;
-        }
-    }
-
-    private class MatchContext {
-        final List<Person> people;
-        final boolean[][] compatible;
-        final double[][] penalty;
-        final List<List<Integer>> preferences;
-
-        MatchContext(List<Person> people) {
-            this.people = people;
-            int n = people.size();
-            this.compatible = new boolean[n][n];
-            this.penalty = new double[n][n];
-            this.preferences = new ArrayList<>();
-
-            for (int i = 0; i < n; i++) {
-                Arrays.fill(penalty[i], INF);
-                preferences.add(new ArrayList<Integer>());
-            }
-
-            for (int i = 0; i < n; i++) {
-                for (int j = i + 1; j < n; j++) {
-                    Person a = people.get(i);
-                    Person b = people.get(j);
-                    if (filter.isCompatible(a, b)) {
-                        compatible[i][j] = true;
-                        compatible[j][i] = true;
-                        double value = calculator.calculate(a, b);
-                        penalty[i][j] = value;
-                        penalty[j][i] = value;
-                    }
-                }
-            }
-
-            for (int i = 0; i < n; i++) {
-                List<Integer> ordered = new ArrayList<>();
-                for (int j = 0; j < n; j++) {
-                    if (compatible[i][j]) {
-                        ordered.add(j);
-                    }
-                }
-                final int person = i;
-                ordered.sort(new Comparator<Integer>() {
-                    @Override
-                    public int compare(Integer left, Integer right) {
-                        int byPenalty = Double.compare(penalty[person][left], penalty[person][right]);
-                        if (byPenalty != 0) {
-                            return byPenalty;
-                        }
-                        return Integer.compare(people.get(left).id, people.get(right).id);
-                    }
-                });
-                preferences.set(i, ordered);
-            }
-        }
-    }
-
-    private static class BlossomMatcher {
-        private final boolean[][] compatible;
-        private final double[][] penalty;
-        private final int n;
-        private final List<List<Integer>> graph;
-
-        private int[] match;
-        private int[] parent;
-        private int[] base;
-        private boolean[] used;
-        private boolean[] blossom;
-        private Queue<Integer> queue;
-
-        BlossomMatcher(boolean[][] compatible, double[][] penalty) {
-            this.compatible = compatible;
-            this.penalty = penalty;
-            this.n = compatible.length;
-            this.graph = buildGraph();
-        }
-
-        int[] findPerfectMatching() {
-            match = new int[n];
-            Arrays.fill(match, -1);
-            seedGreedyMatching();
-
-            for (int i = 0; i < n; i++) {
-                if (match[i] == -1) {
-                    int endpoint = findAugmentingPath(i);
-                    if (endpoint != -1) {
-                        augment(endpoint);
-                    }
-                }
-            }
-
-            for (int i = 0; i < n; i++) {
-                if (match[i] == -1) {
-                    return null;
-                }
-            }
-            return match;
-        }
-
-        private List<List<Integer>> buildGraph() {
-            List<List<Integer>> result = new ArrayList<>();
-            for (int i = 0; i < n; i++) {
-                List<Integer> neighbors = new ArrayList<>();
-                for (int j = 0; j < n; j++) {
-                    if (compatible[i][j]) {
-                        neighbors.add(j);
-                    }
-                }
-                final int person = i;
-                neighbors.sort(new Comparator<Integer>() {
-                    @Override
-                    public int compare(Integer left, Integer right) {
-                        int byPenalty = Double.compare(penalty[person][left], penalty[person][right]);
-                        if (byPenalty != 0) {
-                            return byPenalty;
-                        }
-                        return Integer.compare(left, right);
-                    }
-                });
-                result.add(neighbors);
-            }
-            return result;
-        }
-
-        private void seedGreedyMatching() {
-            List<int[]> edges = new ArrayList<>();
-            for (int i = 0; i < n; i++) {
-                for (int j = i + 1; j < n; j++) {
-                    if (compatible[i][j]) {
-                        edges.add(new int[]{i, j});
-                    }
-                }
-            }
-            edges.sort(new Comparator<int[]>() {
-                @Override
-                public int compare(int[] left, int[] right) {
-                    int byPenalty = Double.compare(penalty[left[0]][left[1]], penalty[right[0]][right[1]]);
-                    if (byPenalty != 0) {
-                        return byPenalty;
-                    }
-                    if (left[0] != right[0]) {
-                        return Integer.compare(left[0], right[0]);
-                    }
-                    return Integer.compare(left[1], right[1]);
-                }
-            });
-
-            for (int[] edge : edges) {
-                if (match[edge[0]] == -1 && match[edge[1]] == -1) {
-                    match[edge[0]] = edge[1];
-                    match[edge[1]] = edge[0];
-                }
-            }
-        }
-
-        private int findAugmentingPath(int root) {
-            used = new boolean[n];
-            parent = new int[n];
-            base = new int[n];
-            queue = new ArrayDeque<>();
-            Arrays.fill(parent, -1);
-            for (int i = 0; i < n; i++) {
-                base[i] = i;
-            }
-
-            used[root] = true;
-            queue.add(root);
-
-            while (!queue.isEmpty()) {
-                int v = queue.remove();
-                for (int u : graph.get(v)) {
-                    if (base[v] == base[u] || match[v] == u) {
-                        continue;
-                    }
-                    if (u == root || (match[u] != -1 && parent[match[u]] != -1)) {
-                        int currentBase = lca(v, u);
-                        blossom = new boolean[n];
-                        markPath(v, currentBase, u);
-                        markPath(u, currentBase, v);
-                        for (int i = 0; i < n; i++) {
-                            if (blossom[base[i]]) {
-                                base[i] = currentBase;
-                                if (!used[i]) {
-                                    used[i] = true;
-                                    queue.add(i);
-                                }
-                            }
-                        }
-                    } else if (parent[u] == -1) {
-                        parent[u] = v;
-                        if (match[u] == -1) {
-                            return u;
-                        }
-                        int matched = match[u];
-                        used[matched] = true;
-                        queue.add(matched);
-                    }
-                }
-            }
-            return -1;
-        }
-
-        private int lca(int a, int b) {
-            boolean[] usedPath = new boolean[n];
-            while (true) {
-                a = base[a];
-                usedPath[a] = true;
-                if (match[a] == -1) {
-                    break;
-                }
-                a = parent[match[a]];
-            }
-            while (true) {
-                b = base[b];
-                if (usedPath[b]) {
-                    return b;
-                }
-                b = parent[match[b]];
-            }
-        }
-
-        private void markPath(int vertex, int currentBase, int child) {
-            while (base[vertex] != currentBase) {
-                blossom[base[vertex]] = true;
-                blossom[base[match[vertex]]] = true;
-                parent[vertex] = child;
-                child = match[vertex];
-                vertex = parent[match[vertex]];
-            }
-        }
-
-        private void augment(int vertex) {
-            while (vertex != -1) {
-                int parentVertex = parent[vertex];
-                int nextVertex = parentVertex == -1 ? -1 : match[parentVertex];
-                match[vertex] = parentVertex;
-                if (parentVertex != -1) {
-                    match[parentVertex] = vertex;
-                }
-                vertex = nextVertex;
-            }
-        }
     }
 }
