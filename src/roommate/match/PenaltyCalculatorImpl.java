@@ -8,6 +8,12 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 public class PenaltyCalculatorImpl implements PenaltyCalculator {
+    private static final double SLEEP_FACTOR = 1.5;
+    private static final double WAKE_FACTOR = 1.3;
+    private static final double CLEANING_FACTOR = 1.5;
+    private static final double STUDY_ROOM_CONFLICT_FACTOR = 0.1;
+    private static final double MBTI_FACTOR = 0.05;
+
     private static final String[] KEYS = {
             "sleep", "wake", "cleaning", "temp", "noise", "study", "mbti"
     };
@@ -35,12 +41,19 @@ public class PenaltyCalculatorImpl implements PenaltyCalculator {
             if (function == null) {
                 continue;
             }
-            double distance = function.calculate(valueOf(a, key), valueOf(b, key));
-            double penalty = (a.getImportance(key) + b.getImportance(key)) * distance;
+            double distance = distanceOf(a, b, key, function);
+            double penalty = (a.getImportance(key) + b.getImportance(key)) * distance * factorOf(key);
             penalties.put(key, penalty);
         }
 
         return penalties;
+    }
+
+    private double distanceOf(Person a, Person b, String key, DistanceFunction function) {
+        if ("study".equals(key)) {
+            return studyDistance(a.studyPlace, b.studyPlace);
+        }
+        return function.calculate(valueOf(a, key), valueOf(b, key));
     }
 
     private double valueOf(Person person, String key) {
@@ -59,25 +72,35 @@ public class PenaltyCalculatorImpl implements PenaltyCalculator {
         if ("noise".equals(key)) {
             return person.noiseTolerance;
         }
-        if ("study".equals(key)) {
-            return studyValue(person.studyPlace);
-        }
         if ("mbti".equals(key)) {
             return person.mbtiEI == 'E' ? 1.0 : 0.0;
         }
         return 0.0;
     }
 
-    private double studyValue(String value) {
-        if ("room".equals(value)) {
-            return 0.0;
+    private double factorOf(String key) {
+        if ("sleep".equals(key)) {
+            return SLEEP_FACTOR;
         }
-        if ("library".equals(value)) {
+        if ("wake".equals(key)) {
+            return WAKE_FACTOR;
+        }
+        if ("cleaning".equals(key)) {
+            return CLEANING_FACTOR;
+        }
+        if ("study".equals(key)) {
+            return STUDY_ROOM_CONFLICT_FACTOR;
+        }
+        if ("mbti".equals(key)) {
+            return MBTI_FACTOR;
+        }
+        return 1.0;
+    }
+
+    private double studyDistance(String a, String b) {
+        if ("room".equals(a) && "room".equals(b)) {
             return 1.0;
         }
-        if ("mixed".equals(value)) {
-            return 2.0;
-        }
-        return -1.0;
+        return 0.0;
     }
 }
